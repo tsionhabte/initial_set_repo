@@ -1,44 +1,90 @@
----
-- name: Install jenkins
-  hosts: localhost
-  become: yes
-  become_user: root
+provider "aws" {
+  region = "us-east-1"
+}
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
 
-  tasks:
-  - name: Update all packages to their latest version
-    apt:
-      name: "*"
-      state: latest
+resource "aws_security_group" "Jenkins-sg" {
+  name        = "Jenkins-Security Group"
+  description = "Open 22,443,80,8080"
 
-  - name: download jenkins key
-    ansible.builtin.get_url:
-      url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
-      dest: /usr/share/keyrings/jenkins-keyring.asc
-        
-  - name: Add Jenkins repo
-    ansible.builtin.apt_repository:
-      repo: deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/
-      state: present
-      filename: jenkins.list  
+  # Define a single ingress rule to allow traffic on all specified ports
+  ingress = [
+    for port in [22, 80, 443, 8080] : {
+      description      = "TLS from VPC"
+      from_port        = port
+      to_port          = port
+      protocol         = "tcp"
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      security_groups  = []
+      self             = false
+    }
+  ]
 
-  - name: Update all packages to their latest version
-    apt:
-      name: "*"
-      state: latest
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-  - name: Install fontconfig
-    shell: apt install fontconfig -y    
+  tags = {
+    Name = "Jenkins-sg"
+  }
+}
 
-  - name: Install java
-    shell: apt install fontconfig openjdk-17-jre -y  
 
-  - name: Install the Jenkins
-    ansible.builtin.apt:
-      name: jenkins
-      state: present  
+resource "aws_instance" "web" {
+  ami                    = "ami-04a81a99f5ec58529"
+  instance_type          = "t2.small"
+  key_name               = "jenkins"
+  vpc_security_group_ids = [aws_security_group.Jenkins-sg.id]
+  user_data              = templatefile("./jenkins.sh", {})
 
-  - name: Make sure a service unit is running
-    ansible.builtin.systemd:
-      state: started
-      name: jenkins
-      enabled: yes    
+  tags = {
+    Name = "Jenkins-sonar"
+  }
+  root_block_device {
+    volume_size = 8
+  }
+}
+
+resource "aws_instance" "sonar" {
+  ami                    = "ami-04a81a99f5ec58529"
+  instance_type          = "t2.small"
+  key_name               = "sonarqube"
+  vpc_security_group_ids = [aws_security_group.Jenkins-sg.id]
+  user_data              = templatefile("./sonar.sh", {})
+  
+
+  tags = {
+    Name = "sonar"
+  }
+  root_block_device {
+    volume_size = 8
+  }
+}
+
+resource "aws_instance" "node" {
+  ami                    = "ami-04a81a99f5ec58529"
+  instance_type          = "t2.micro"
+  key_name               = "jenkins-node"
+  vpc_security_group_ids = [aws_security_group.Jenkins-sg.id]
+  user_data              = templatefile("./sonar.sh", {})
+  
+
+  tags = {
+    Name = "node"
+  }
+  root_block_device {
+    volume_size = 8
+  }
+}
